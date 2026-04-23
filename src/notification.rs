@@ -102,3 +102,91 @@ impl<'a, D: Serialize> DeclarativePushPayload<'a, D> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde::Serialize;
+    use serde_json::Value;
+
+    use super::{Notification, NotificationAction};
+
+    fn parse_payload<D: Serialize>(notification: &Notification<D>) -> Value {
+        let bytes = notification.to_payload().expect("to_payload should not fail");
+        serde_json::from_slice(&bytes).expect("payload should be valid JSON")
+    }
+
+    #[test]
+    fn test_new_sets_required_fields() {
+        let n: Notification<()> = Notification::new("Hello".to_string(), "https://example.com/".to_string());
+        assert_eq!(n.title, "Hello");
+        assert_eq!(n.navigate, "https://example.com/");
+    }
+
+    #[test]
+    fn test_payload_web_push_field_is_rfc8030_magic_value() {
+        let n: Notification<()> = Notification::new("t".to_string(), "u".to_string());
+        let v = parse_payload(&n);
+        assert_eq!(v["web_push"], 8030);
+    }
+
+    #[test]
+    fn test_require_interaction_serializes_as_camel_case() {
+        let mut n: Notification<()> = Notification::new("t".to_string(), "u".to_string());
+        n.require_interaction = Some(true);
+        let v = parse_payload(&n);
+        assert_eq!(v["notification"]["requireInteraction"], true);
+        assert!(v["notification"].get("require_interaction").is_none());
+    }
+
+    #[test]
+    fn test_payload_with_custom_data_struct() {
+        #[derive(Serialize)]
+        struct MyData {
+            user_id: u32,
+            action: String,
+        }
+
+        let mut n = Notification::new("t".to_string(), "u".to_string());
+        n.data = Some(MyData {
+            user_id: 42,
+            action: "open".to_string(),
+        });
+        let v = parse_payload(&n);
+        assert_eq!(v["notification"]["data"]["user_id"], 42);
+        assert_eq!(v["notification"]["data"]["action"], "open");
+    }
+
+    #[test]
+    fn test_payload_with_primitive_data() {
+        let mut n = Notification::new("t".to_string(), "u".to_string());
+        n.data = Some("just a string");
+        let v = parse_payload(&n);
+        assert_eq!(v["notification"]["data"], "just a string");
+    }
+
+    #[test]
+    fn test_notification_actions() {
+        let mut n: Notification<()> = Notification::new("t".to_string(), "u".to_string());
+        n.actions = Some(vec![
+            NotificationAction {
+                title: "Accept".to_string(),
+                action: "accept".to_string(),
+                navigate: "https://example.com/accept".to_string(),
+                icon: None,
+            },
+            NotificationAction {
+                title: "Decline".to_string(),
+                action: "decline".to_string(),
+                navigate: "https://example.com/decline".to_string(),
+                icon: Some("https://example.com/decline-icon.png".to_string()),
+            },
+        ]);
+        let v = parse_payload(&n);
+        let actions = v["notification"]["actions"].as_array().unwrap();
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0]["action"], "accept");
+        assert!(actions[0].get("icon").is_none());
+        assert_eq!(actions[1]["action"], "decline");
+        assert_eq!(actions[1]["icon"], "https://example.com/decline-icon.png");
+    }
+}
